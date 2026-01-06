@@ -1,0 +1,313 @@
+Labels and selectors 
+==================
+Labels
+------
+--> When One thing in k8s needs to find another things in k8s, it uses labels.  Labels are key/value pairs attached to Object
+--> You can make your own and apply it.
+it’s like tag things in kubernetes  For e.g.
+
+labels:
+	app: nginx  
+	role: web  
+	env: dev
+
+Selectors
+---------
+
+--> Selectors use the label key to find a collection of objects matched with same value
+--> It’s like Filter, Conditions and query to your labels
+
+For e.g.  
+selectors:
+	env = dev
+	app != db
+	release in (1.3,1.4)
+
+Labels and Selectors are used in many places like Services, Deployment and we will see now in Replicasets.
+
+
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: javawebapptest
+  labels:
+    app: javawebappTest
+    env: prod
+  namespace: prod
+spec:
+  containers:
+  - name: javawebapp1
+    image: kkeducationb2/java-webapp:1.1
+    ports:
+    - containerPort: 8080
+
+ save: javawebapp.yaml
+
+ run: kubectl apply -f javawebapp.yaml --dry-run=client
+
+ kubectl apply -f javawebapp.yaml
+
+ ----------------
+
+apiVersion: v1
+kind: Pod
+metadata: 
+  name: mogodbpod
+  namespace: prod
+spec:
+  containers:
+  - name: mongodbcontainer
+    image: mongo
+    ports:
+    -  containerPort: 27017
+
+
+ save: mongo.yaml
+
+ run: kubectl apply -f mongo.yaml
+
+
+
+ To see the labels
+ -----------------
+
+ kubectl describe pod <pod-name> -n <Name-space>
+
+How to display only labels?
+----------------------------
+
+kubectl get po <pod-name> -n <Name-space> --show-labels
+
+How to see node and pod ip?
+---------------------------
+
+kubectl get po -n test-ns -o wide
+
+How to go inside of pod?
+-------------------------
+
+kubectl exec -it -n test-ns javawebapptest -- sh
+
+NOTE: take another pod ip and run the ping command to check the connection
+
+ping 10.0.1.9
+
+
+
+
+============================================================
+
+IQ] why we are going for k8s service object?
+============================================
+
+
+NOTE: one pod can communicate with another pod through IP, But is not suggestable why?
+
+(i) Pod ip may changed , when it crashes
+(ii) you need to maintain many replicas, At that time multiple ips are generated.
+
+--> To overcome this problem , we are going for one Object called "Service"
+
+pod1:
+------
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: javawebapp
+  labels:
+    app: javawebapp
+  namespace: test-ns
+spec:
+  containers:
+  - name: javawebapp
+    image: kkeducationb2/java-webapp:1.1
+    ports:
+    - containerPort: 8080
+
+
+pod2
+-----
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mongopod
+  namespace: test-ns
+  labels:
+    app: mongo
+spec:
+  containers:
+  - name: mongocontainer
+    image: mongo
+    ports:
+    - containerPort: 27017
+
+
+kubectl exec -it -n test-ns javawebapp -- sh
+
+ping 10.44.0.1
+
+
+service: A service is responsible for making our Pods discoverable inside the network or exposing them to the internet. A Service identifies Pods by its LabelSelector.
+
+
+
+service Types
+=============
+1. ClusterIP
+2. NodePort
+3. Load balancer
+
+
+1. ClusterIP
+------------
+
+--> Exposes the service on a cluster-internal IP. Service is only reachable from within the cluster. This is the default Type.
+
+--> When we create a service we will get one Virtual IP (Cluster IP) it will get registered to the DNS(kube-dns). Using this Other PODS can find and talk the pods of this service using service name.
+
+--> Service is just a logical concept, the real work is being done by the “kube-proxy” pod that is running on each node.
+
+--> It redirect requests from Cluster IP(Virtual IP Address) to Pod IP.
+
+
+Example 1:
+
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: javawebapp
+  labels:
+    app: javawebapp
+    env: prod
+  namespace: prod
+spec:
+  containers:
+  - name: javawebapp
+    image: kkeducationb2/java-webapp:1.1
+    ports:
+    - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+ name: javawebappsvc
+ namespace: prod
+spec:
+  type: ClusterIP
+  selector:
+    app: javawebapp
+  ports:
+  - port: 80
+    targetPort: 8080
+
+
+kubectl apply -f pod1.yaml
+
+kubectl get all -n test-ns -o wide --show-labels
+
+kubectl describe svc javawebappsvc  --> to check the endpoints
+
+
+NOTE: create one more pod with same labels and see the endpoints.
+
+
+Example 2:
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: simple-web-app
+  labels:
+    app: simple-web-app
+spec:
+  containers:
+  - name: simple-web-app
+    image: nginx:latest  # Nginx image to serve a basic web page
+    ports:
+    - containerPort: 80  # Nginx listens on port 80
+ ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: simple-web-service
+spec:
+  selector:
+    app: simple-web-app  # Match pods with the same label
+  ports:
+    - protocol: TCP
+      port: 80  # Service port
+      targetPort: 80  # The port on the container
+  type: ClusterIP  # This is the default type for services
+
+
+
+curl http://10.110.231.227:80 --> From outside pod
+
+
+2. NodePort
+-----------
+
+Exposes the service on each Node’s IP at a static port. 
+
+--> A ClusterIP service, to which the NodePort service will route,  is automatically created. 
+
+-->You’ll be able to contact the NodePort service, from outside the cluster, by using     “<NodeIP>:<NodePort>”.
+
+--> Note: If we don’t define nodePort value for NodePort Service. K8’s will randomly
+Allocate a nodePort with in 30000—32767.
+
+
+
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: javawebapp
+  labels:
+    app: javawebapp
+  namespace: test-ns
+spec:
+  containers:
+  - name: javawebapp
+    image: kkeducationb2/java-webapp:1.1
+    ports:
+    - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+ name: javawebappsvcnp
+ namespace: test-ns
+spec:
+  type: NodePort
+  selector:
+    app: javawebapp
+  ports:
+  - port: 80
+    targetPort: 8080
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
