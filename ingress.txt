@@ -1,0 +1,191 @@
+LoadBalancer
+------------
+Kubernetes Service type LoadBalancer in AWS creates a separate cloud load balancer for each service and exposes it to the internet.
+It works at network level (L4), so it can’t do smart routing like paths or hostnames, and traffic still passes through nodes before reaching pods.
+This makes it simple but costly, slower to scale, and less efficient for many microservices.
+
++----+-------------------+----------------------------------------------+
+| No | Problem           | What Actually Happens                        |
++----+-------------------+----------------------------------------------+
+| 1  | High Cost         | Each Service = 1 Load Balancer               |
+|    |                   | Dev teams create many -> bill explodes       |
++----+-------------------+----------------------------------------------+
+| 2  | Slow Provisioning | Takes 2-5 minutes to create LB               |
+|    |                   | CI/CD feels slow                             |
++----+-------------------+----------------------------------------------+
+| 3  | AWS LB Limits     | AWS account has LB quotas                    |
+|    |                   | You hit limit -> new services fail           |
++----+-------------------+----------------------------------------------+
+| 4  | One IP per Service| Every app gets separate public IP            |
+|    |                   | Hard to manage DNS                           |
++----+-------------------+----------------------------------------------+
+| 5  | Not Smart Routing | No path-based or host routing                |
+|    |                   | Need Ingress for that                        |
++----+-------------------+----------------------------------------------+
+
+10 microservices
+= 10 Load Balancers
+≈ $18–$25 per LB / month (minimum)
+= $180–$250/month JUST for LBs
+
+
+LoadBalancer Service
+-->Directly gives your app a public IP
+-->Good for one app or non-HTTP traffic (DB, TCP, etc.)
+
+Internet → AWS LB -> Node →SVC-> Pod
+
+Ingress
+---------
+LoadBalancer exposes one service at network level, while Ingress provides smart HTTP routing to multiple services using a single load balancer.
+
+Ingress is a Kubernetes object that defines routing rules, while Ingress Controller is the software that reads those rules and actually routes external traffic to services.
+
+-->Acts like a smart traffic manager
+-->One entry point routes to many services based on URL/domain
+
+Internet → One LB → Ingress Controller → Service → Pod
+
++--------------------+----------------------------------------------+
+| Component          | What it is                                   |
++--------------------+----------------------------------------------+
+| Ingress Resource   | Kubernetes YAML object (configuration)       |
+| Ingress Controller | Actual software that handles traffic         |
++--------------------+----------------------------------------------+
+
+1. Ingress Resource (The Definition)
+This is just a Kubernetes object like Pod or Service.
+It contains:
+Domain names
+URL paths
+Which service to send traffic to
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app-ingress
+spec:
+  rules:
+  - host: myapp.com
+    http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: api-service
+            port:
+              number: 80
+      - path: /web
+        pathType: Prefix
+        backend:
+          service:
+            name: web-service
+            port:
+              number: 80
+
+2. Ingress Controller (The Worker)
+
+This is a running application inside the cluster.
+It:
+Watches Ingress resources
+Configures load balancer / proxy
+Actually routes traffic
+Without controller → Ingress does nothing.
+
+Popular Ingress Controllers
++-----------------------+--------------------------+
+| Controller            | Used In                  |
++-----------------------+--------------------------+
+| NGINX Ingress         | Most common              |
+| AWS Load Balancer Ctrl| EKS (creates ALB)        |
+| Traefik               | Lightweight              |
+| HAProxy               | High performance         |
+| Kong Ingress          | strong API management,   |
+|						| authentication           |
++-----------------------+--------------------------+
+
+User request -->Cloud Load Balancer -->Ingress Controller Pod(checks Ingress rules) -->Service -->Pod
+
+
+How to Install NGINX Ingress in EKS
+Step 1 — Add Helm repo
+
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm repo update
+
+helm install nginx-ingress ingress-nginx/ingress-nginx \
+  --namespace ingress-nginx --create-namespace \
+  --set controller.service.type=LoadBalancer
+  
+kubectl get svc -n ingress-nginx
+  
+Service type LoadBalancer --> AWS LB -->NGINX Controller Pods
+
+        
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: signup-ingress
+  namespace: prod
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+spec:
+  ingressClassName: nginx
+  rules:
+  - http:
+      paths:
+      - path: /v1(/|$)(.*)
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: signuploginsvcv1-lb
+            port:
+              number: 80
+      - path: /v2(/|$)(.*)
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: signuploginsvcv2-lb
+            port:
+              number: 80
+
+
+
+
+kubectl apply -f ingress.yaml
+kubectl get ingress -n prod
+
+
+Limitations
+-----------
+
++----+---------------------------+----------------------------------------------+
+| No | Limitation in Ingress     | Why Gateway API is Better                    |
++----+---------------------------+----------------------------------------------+
+| 1  | Single resource type      | Gateway API splits roles (Gateway, Route)    |
+|    |                           | Cleaner architecture                         |
++----+---------------------------+----------------------------------------------+
+| 2  | Poor role separation      | Infra & app teams mixed in one object        |
+|    |                           | Gateway API separates responsibilities       |
++----+---------------------------+----------------------------------------------+
+| 3  | HTTP only focus           | Limited TCP/UDP support                      |
+|    |                           | Gateway API supports L4 + L7                 |
++----+---------------------------+----------------------------------------------+
+| 4  | Annotations overload      | Vendor features via messy annotations        |
+|    |                           | Gateway API uses structured fields           |
++----+---------------------------+----------------------------------------------+
+| 5  | Limited traffic control   | No built-in traffic splitting                |
+|    |                           | Gateway API supports advanced routing        |
++----+---------------------------+----------------------------------------------+
+| 6  | No standard extensibility | Each controller behaves differently          |
+|    |                           | Gateway API standardizes behavior            |
++----+---------------------------+----------------------------------------------+
+| 7  | Hard multi-tenancy        | No proper namespace boundary control         |
+|    |                           | Gateway API has Route binding control        |
++----+---------------------------+----------------------------------------------+
+| 8  | Status visibility weak    | Hard to know routing state                   |
+|    |                           | Gateway API provides detailed status         |
++----+---------------------------+----------------------------------------------+
